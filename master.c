@@ -6,8 +6,10 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/ipc.h>
+#include <sys/sem.h>
 #include <sys/shm.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
 
@@ -16,11 +18,8 @@
 FILE *file;
 pid_t childPid;
 
-int *sharedInts;
-bool *sharedBools;
-
-int shmid_int;
-int shmid_bool;
+union semun arg;
+int semid;
 
 static void handle_sig(int sig) {
     int errsave, status;
@@ -32,25 +31,9 @@ static void handle_sig(int sig) {
     kill(childPid, SIGTERM);
     waitpid(childPid, &status, 0);
 
-    //Detach shared memory
-    if (shmdt(sharedInts) == -1) {
-        perror("./master: sigShmdt1");
-        exit(1);
-    }
-
-    if (shmdt(sharedBools) == -1) {
-        perror("./master: sigShmdt2");
-        exit(1);
-    }
-
     //Remove shared memory
-    if (shmctl(shmid_int, IPC_RMID, 0) == -1) {
-        perror("./master: sigShmctl1");
-        exit(1);
-    }
-
-    if (shmctl(shmid_bool, IPC_RMID, 0) == -1) {
-        perror("./master: sigShmctl2");
+    if (semctl(semid, 0, IPC_RMID, arg) == -1) {
+        perror("./master: sigSemctl");
         exit(1);
     }
 
@@ -80,17 +63,17 @@ int main(int argc, char *argv[])
 {
     signal(SIGINT, handle_sig);
 
-    key_t keyInt = ftok("./README.txt", 'g');
-    key_t keyBool = ftok("./README.txt", 's');
+    key_t key = ftok("./README.txt", 's');
+
     char iNum[3];
 
     int option, status;
     int s = 100;
-    int n = 2;
+    int nprocs = 2;
 
     //Construct format for "perror"
     char* title = argv[0];
-    char report[20] = ": shm";
+    char report[20] = ": sem";
     char* message;
 
     //Command line option
@@ -109,19 +92,19 @@ int main(int argc, char *argv[])
         }
     }
     
-    //Get the argument for number of options, if it exists
+    //Get the argument for number of slaves, if it exists
     if (argv[optind] != NULL) {
-        n = atoi(argv[optind]);
+        nprocs = atoi(argv[optind]);
 
         //Check for invalid entries
-        if (n > MAX_PROC) {
+        if (nprocs > MAX_PROC) {
             printf("Sorry, the maximum allowed processes for this program is %i.\n", MAX_PROC);
             printf("Number of processes has been set to %i...\n\n", MAX_PROC);
-            n = MAX_PROC;
-        } else if (n < 1) {
+            nprocs = MAX_PROC;
+        } else if (nprocs < 1) {
             printf("There was an error with your input. Please only use numbers.\n");
             printf("Number of processes has been set to 1...\n\n");
-            n = 1;
+            nprocs = 1;
         }
     }
 
@@ -140,50 +123,25 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    //Get shared memory
-    shmid_int = shmget(keyInt, sizeof(sharedInts), IPC_CREAT | 0666);
-    if (shmid_int == -1) {
-        strcpy(report, ": shmget1");
+    //Create semaphore set
+    if ((semid = semget(key, 1, 0666 | IPC_CREAT)) == -1) {
+        strcpy(report, ": semget");
         message = strcat(title, report);
         perror(message);
         return 1;
     }
 
-    shmid_bool = shmget(keyBool, sizeof(sharedBools), IPC_CREAT | 0666);
-    if (shmid_bool == -1) {
-        strcpy(report, ": shmget2");
+    //Initialize semaphore
+    arg.val = 1;
+    if (semctl(semid, 0, SETVAL, arg) == -1) {
+        strcpy(report, ": semctl(Init)");
         message = strcat(title, report);
         perror(message);
         return 1;
-    }
-
-    //Attach shared memory
-    sharedInts = shmat(shmid_int, NULL, 0);
-    if (sharedInts == (void *) -1) {
-        strcpy(report, ": shmat1");
-        message = strcat(title, report);
-        perror(message);
-        return 1;
-    }
-
-    sharedBools = shmat(shmid_bool, NULL, 0);
-    if (sharedBools == (void *) -1) {
-        strcpy(report, ": shmat2");
-        message = strcat(title, report);
-        perror(message);
-        return 1;
-    }
-
-    //Reset arrays
-    for (int x = 0; x < 20; x++) {
-        sharedInts[x] = 0;
-    }
-    for (int x = 0; x < 20; x++) {
-        sharedBools[x] = 0;
     }
 
     //Fork and Exec slave programs
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < nprocs; i++) {
         childPid = fork();
         if (childPid == -1) {
             strcpy(report, ": childPid");
@@ -207,31 +165,9 @@ int main(int argc, char *argv[])
         } while (childPid == 0);
     }
 
-    //Detach shared memory
-    if (shmdt(sharedInts) == -1) {
-        strcpy(report, ": shmdt1");
-        message = strcat(title, report);
-        perror(message);
-        return 1;
-    }
-
-    if (shmdt(sharedBools) == -1) {
-        strcpy(report, ": shmdt2");
-        message = strcat(title, report);
-        perror(message);
-        return 1;
-    }
-
     //Remove shared memory
-    if (shmctl(shmid_int, IPC_RMID, 0) == -1) {
-        strcpy(report, ": shmctl1");
-        message = strcat(title, report);
-        perror(message);
-        return 1;
-    }
-
-    if (shmctl(shmid_bool, IPC_RMID, 0) == -1) {
-        strcpy(report, ": shmctl2");
+    if (semctl(semid, 0, IPC_RMID, arg) == -1) {
+        strcpy(report, ": semctl(RMID)");
         message = strcat(title, report);
         perror(message);
         return 1;

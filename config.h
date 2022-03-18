@@ -1,3 +1,6 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
 #define MAX_PROC 20
 
 union semun {
@@ -6,3 +9,5 @@ union semun {
             unsigned short *array;  /* array for GETALL & SETALL */
             struct seminfo *__buf;  /* buffer for IPC_INFO */
 };
+
+#endif

@@ -2,7 +2,10 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
 #include <sys/shm.h>
+#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -11,86 +14,49 @@
 int main(int argc, char *argv[]) {
     FILE *file;
     char logFile[15] = "./logfile.";
-    key_t keyInt = ftok("./README.txt", 'g');
-    key_t keyBool = ftok("./README.txt", 's');
+    int number = atoi(argv[0]);
 
-    int *number;
-    bool *choosing;
+    key_t key = ftok("./README.txt", 's');
+    union semun arg;
+    int semid;
 
-    int i = atoi(argv[0]);
-    int higher = 0;
     char onlyTime[10];
 
     //Construct format for "perror"
     char* title = argv[0];
-    char report[20] = ": shm";
+    char report[20] = ": sem";
     char* message;
 
-    //Get shared memory
-    int shmid_int = shmget(keyInt, sizeof(number), IPC_CREAT | 0666);
-    if (shmid_int == -1) {
-        strcpy(report, ": shmget1");
+    //Get semaphore set
+    if ((semid = semget(key, 1, 0)) == -1) {
+        strcpy(report, ": semget");
         message = strcat(title, report);
         perror(message);
         return 1;
     }
 
-    int shmid_bool = shmget(keyBool, sizeof(choosing), IPC_CREAT | 0666);
-    if (shmid_bool == -1) {
-        strcpy(report, ": shmget2");
-        message = strcat(title, report);
-        perror(message);
-        return 1;
-    }
-
-    //Attach shared memory
-    number = shmat(shmid_int, NULL, 0);
-    if (number == (void *) -1) {
-        strcpy(report, ": shmat1");
-        message = strcat(title, report);
-        perror(message);
-        return 1;
-    }
-
-    choosing = shmat(shmid_bool, NULL, 0);
-    if (choosing == (void *) -1) {
-        strcpy(report, ": shmat2");
-        message = strcat(title, report);
-        perror(message);
-        return 1;
-    }
-
-    //Conduct Bakery Algorithm
-    do {
-        //Queue up
-        choosing[i] = true;
-
-        for (int k = 0; k < 20; k++) {
-            if (higher < number[k]) {
-                higher = number[k];
-            }
-        }
-        number[i] = 1 + higher;
-        
-        choosing[i] = false;
-
-        for (int j = 0; j < MAX_PROC; j++) {
-            while (choosing[j]) {
-               ; // WAIT if j happens to be choosing
-            }
-            while ( (number[j] != 0) 
-            && (number[j] < number[i] || (number[j] == number[i] && j < i)) ) {
-               ;
+    //Queue into critical section using semaphores
+    for (int i = 0; i < 5; i++) {
+        struct sembuf sb = {0, -1, 0};
+        //Wait until semaphore is 0
+        if (arg.val > 0) {
+            sb.sem_op = 0;
+            if(semop(semid, &sb, 1) == -1) {
+                strcpy(report, ": semop(wait)");
+                message = strcat(title, report);
+                perror(message);
+                return 1;
             }
         }
 
-        //sleep for random amount of time (between 0 and 5 seconds)
-        sleep(rand() % 5);
-
-        //critical_section();
-        time_t currentTime;
-        time(&currentTime);
-        strncpy(onlyTime, ctime(&currentTime)+11, 8);
+        //Decrement semaphore
+        sb.sem_op = -1;
+        if(semop(semid, &sb, 1) == -1) {
+            strcpy(report, ": semop(--)");
+            message = strcat(title, report);
+            perror(message);
+            return 1;
+        }
 
         //Make logfile
         strcat(logFile, argv[0]);
@@ -100,9 +66,17 @@ int main(int argc, char *argv[]) {
         fprintf(file, "Entered critical section at %s\n", onlyTime);
         fclose(file);
 
+        //sleep for random amount of time (between 0 and 5 seconds)
+        sleep(rand() % 5);
+
+        //critical_section();
+        time_t currentTime;
+        time(&currentTime);
+        strncpy(onlyTime, ctime(&currentTime)+11, 8);
+
         //Print to cstest
         file = fopen("./cstest", "a");
-        fprintf(file, "%s Queue %i File modified by process number %i\n", onlyTime, number[i], i);
+        fprintf(file, "%s Queue %i File modified by process number %i\n", onlyTime, number, i);
         fclose(file);
 
         //sleep for random amount of time (between 0 and 5 seconds)
@@ -116,24 +90,15 @@ int main(int argc, char *argv[]) {
         fprintf(file, "Left critical section at %s\n", onlyTime);
         fclose(file);  
 
-        //Set queue number to 0 and exit critical section
-        number[i] = 0;
-
-        // Detach shared memory
-        if (shmdt(number) == -1) {
-            strcpy(report, ": shmdt1");
+        //Increment semaphore (Free resource)
+        sb.sem_op = 1;
+        if(semop(semid, &sb, 1) == -1) {
+            strcpy(report, ": semop(--)");
             message = strcat(title, report);
             perror(message);
             return 1;
         }
-
-        if (shmdt(choosing) == -1) {
-            strcpy(report, ": shmdt2");
-            message = strcat(title, report);
-            perror(message);
-            return 1;
-        }
-    } while (1);
+    }
 
     return 0;
 }
