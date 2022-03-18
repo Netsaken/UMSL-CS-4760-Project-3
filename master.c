@@ -11,11 +11,15 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <signal.h>
 
 #include "config.h"
 
 FILE *file;
+char logFile[30] = "./logfile.master";
+char onlyTime[10];
+time_t currentTime;
 pid_t childPid;
 
 union semun arg;
@@ -140,6 +144,14 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    //Log time semaphores created
+    time(&currentTime);
+    strncpy(onlyTime, ctime(&currentTime)+11, 8);
+
+    file = fopen(logFile, "a");
+    fprintf(file, "Finished semaphore creation at %s\n", onlyTime);
+    fclose(file);  
+
     //Fork and Exec slave programs
     for (int i = 0; i < nprocs; i++) {
         childPid = fork();
@@ -172,6 +184,14 @@ int main(int argc, char *argv[])
         perror(message);
         return 1;
     }
+
+    //Log time semaphore removed
+    time(&currentTime);
+    strncpy(onlyTime, ctime(&currentTime)+11, 8);
+
+    file = fopen(logFile, "a");
+    fprintf(file, "Semaphore removed at %s\n", onlyTime);
+    fclose(file);  
 
     return 0;
 }

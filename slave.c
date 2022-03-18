@@ -20,6 +20,7 @@ int main(int argc, char *argv[]) {
     union semun arg;
     int semid;
 
+    time_t currentTime;
     char onlyTime[10];
 
     //Construct format for "perror"
@@ -34,6 +35,9 @@ int main(int argc, char *argv[]) {
         perror(message);
         return 1;
     }
+
+    //Make logfile
+    strcat(logFile, argv[0]);
 
     //Queue into critical section using semaphores
     for (int i = 0; i < 5; i++) {
@@ -58,10 +62,10 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        //Make logfile
-        strcat(logFile, argv[0]);
-
         //Log entry time
+        time(&currentTime);
+        strncpy(onlyTime, ctime(&currentTime)+11, 8);
+        
         file = fopen(logFile, "a");
         fprintf(file, "Entered critical section at %s\n", onlyTime);
         fclose(file);
@@ -70,13 +74,9 @@ int main(int argc, char *argv[]) {
         sleep(rand() % 5);
 
         //critical_section();
-        time_t currentTime;
-        time(&currentTime);
-        strncpy(onlyTime, ctime(&currentTime)+11, 8);
-
         //Print to cstest
         file = fopen("./cstest", "a");
-        fprintf(file, "%s Queue %i File modified by process number %i\n", onlyTime, number, i);
+        fprintf(file, "%s Queue %i File modified by process number %i\n", onlyTime, i, number);
         fclose(file);
 
         //sleep for random amount of time (between 0 and 5 seconds)
